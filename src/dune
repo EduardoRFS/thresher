@@ -1,0 +1,25 @@
+(library
+ (name grainhack)
+ (libraries menhirLib compiler-libs.common)
+ (modules
+  (:standard \ Test))
+ (preprocess
+  (pps ppx_deriving.show sedlex.ppx)))
+
+(menhir
+ (modules sparser)
+ (flags --dump --explain))
+
+(executable
+ (name test)
+ (modules Test)
+ (libraries alcotest grainhack)
+ (preprocess
+  (pps ppx_deriving.show ppx_deriving.eq)))
+
+(rule
+ (alias runtest)
+ (deps
+  (:exe ./test.exe))
+ (action
+  (run %{exe})))
