@@ -11,7 +11,6 @@ with ocamlPackages; buildDunePackage rec {
       root = ./..;
       include = [
         "dune-project"
-        "smol"
         "grainhack"
       ];
       exclude = [];
