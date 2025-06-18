@@ -1,0 +1,9 @@
+(executable
+ (name hack)
+ (libraries menhirLib compiler-libs.common)
+ (preprocess
+  (pps ppx_deriving.show ppx_deriving.eq sedlex.ppx)))
+
+(menhir
+ (modules teejparser)
+ (flags --dump --explain))

@@ -1,5 +1,6 @@
 {
   "ocaml.sandbox": {
-    "kind": "global"
+    "kind": "global",
+    "duneDiagnostics": false
   }
 }

@@ -11,11 +11,8 @@
     flake-utils.lib.eachDefaultSystem (system:
       let pkgs = (nixpkgs.makePkgs {
         inherit system;
-        extraOverlays = [
-          (import ./nix/overlay.nix)
-        ];
       }).extend (self: super: {
-        ocamlPackages = super.ocaml-ng.ocamlPackages_5_0;
+        ocamlPackages = super.ocaml-ng.ocamlPackages_5_2;
       }); in
       let grainhack = pkgs.callPackage ./nix {
         inherit nix-filter;
