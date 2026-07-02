@@ -42,6 +42,21 @@ module Var_map = Map.Make (Var)
 (* TODO: improve this *)
 module Hole = Var
 
+module M = struct
+  type term = Term of { desc : term_desc; loc : Location.t [@opaque] }
+
+  and term_desc =
+    | T_type
+    | T_data
+    | T_annot of { term : term; annot : type_ }
+    | T_let of { bound : pat; arg : term; body : term }
+    | T_var of { var : Var.t }
+    | T_hole of { hole : Hole.t }
+    | TF_box of { type_ : type_ }
+    | TI_box of { content : term }
+    | TE_unbox of { box : term }
+end
+
 module Core = struct
   (* TODO: mutation *)
   (* TODO: recursion *)
@@ -55,16 +70,15 @@ module Core = struct
     L = Label
     C = Cases
   *)
-  type term =
+  type term = Term of { desc : term_desc; loc : Location.t [@opaque] }
+
+  and term_desc =
     (* core *)
-    | T_loc of { term : term; loc : Location.t }
     | T_type
     | T_data
     | T_annot of { term : term; annot : type_ }
     | T_let of { bound : pat; arg : term; body : term }
     | T_var of { var : Var.t }
-    (* TODO: this two are weird *)
-    | T_hole of { hole : Hole.t }
     (* boxing *)
     | TF_box of { type_ : type_ }
     | TI_box of { content : term }
@@ -98,8 +112,9 @@ module Core = struct
     | TI_enum of { label : label; content : term }
     | TE_match of { pred : term; cases : case list }
 
-  and pat =
-    | P_loc of { pat : pat; loc : Location.t }
+  and pat = Pat of { desc : pat_desc; loc : Location.t [@opaque] }
+
+  and pat_desc =
     | P_annot of { pat : pat; annot : type_ }
     | P_var of { var : Var.t }
     | P_alias of { pat : pat; as_ : Var.t }
@@ -130,11 +145,14 @@ module Value = struct
   }
 
   and value_desc =
-    | V_thunk of { env : env; term : term }
     | V_type
     | V_data
     | V_var
     | V_hole
+    (* laziness *)
+    | VF_lazy of { type_ : value }
+    | VI_thunk of { env : env; content : term }
+    | VE_force of { thunk : value }
     (* boxing *)
     | VF_box of { type_ : value }
     | VI_box of { content : value }
@@ -218,6 +236,10 @@ module Value = struct
   let e_level env =
     let (Env { level; vars = _ }) = env in
     level
+
+  let e_iter env f =
+    let (Env { level = _; vars }) = env in
+    Var_map.iter f vars
 
   let c_level closure =
     let (Closure (env, _bound, _term)) = closure in
@@ -317,139 +339,138 @@ module Machinery = struct
       pat : pat;
     }
 
-  let rec eval ~loc env term =
+  let rec eval env term =
     (* TODO: elimination of holes? *)
-    match term with
-    | T_loc { term; loc } ->
-        (* TODO: location stack? *)
-        eval ~loc env term
+    let (Term { desc; loc }) = term in
+    match desc with
     | T_type -> vf_type
     | T_data -> vf_data
-    | T_annot { term; annot = _ } -> eval ~loc env term
+    | T_annot { term; annot = _ } -> eval env term
     | T_let { bound; arg; body } ->
-        let arg = eval ~loc env arg in
-        let env = eval_pat ~loc env arg bound in
-        eval ~loc env body
+        let arg = eval env arg in
+        let env = eval_pat env arg bound in
+        eval env body
     | T_var { var } -> lookup env var
     | T_hole _ -> _
     | TF_box { type_ } ->
-        let type_ = eval_lazy ~loc env type_ in
+        let type_ = eval_lazy env type_ in
         vf_box type_
     | TI_box { content } ->
-        let content = eval ~loc env content in
+        let content = eval env content in
         vi_box content
     | TE_unbox { box } -> (
-        let box = eval_force ~loc env box in
+        let box = eval_force env box in
         match v_desc box with
         | VI_box { content } -> content
         | _ -> ve_unbox box)
     | TF_nominal { type_ } -> _
     | TI_nominal { content } -> _
     | TF_forall { bound; param; body } ->
-        let param = eval_lazy ~loc env param in
+        let param = eval_lazy env param in
         let body = closure env bound body in
         vf_forall param body
     | TI_lambda { bound; body } ->
         let body = closure env bound body in
         vi_lambda body
     | TE_apply { funct; arg } -> (
-        let funct = eval_force ~loc env funct in
-        let arg = eval ~loc env arg in
+        let funct = eval_force env funct in
+        let arg = eval env arg in
         match v_desc funct with
         | VI_lambda { body } -> eval_closure ~loc arg body
         | _ -> ve_apply funct arg)
     | TF_unit -> vf_unit
     | TI_unit -> vi_unit
     | TF_exists { bound; left; rest } ->
-        let left = eval_lazy ~loc env left in
+        let left = eval_lazy env left in
         let rest = closure env bound rest in
         vf_exists left rest
     | TI_pair { left; rest } ->
-        let left = eval ~loc env left in
-        let rest = eval ~loc env rest in
+        let left = eval env left in
+        let rest = eval env rest in
         vi_pair left rest
     | TE_fst { pair } -> (
-        let pair = eval_force ~loc env pair in
+        let pair = eval_force env pair in
         match v_desc pair with
         | VI_pair { left; rest = _ } -> left
         | _ -> ve_fst pair)
     | TE_snd { pair } -> (
-        let pair = eval_force ~loc env pair in
+        let pair = eval_force env pair in
         match v_desc pair with
         | VI_pair { left = _; rest } -> rest
         | _ -> ve_snd pair)
     | TF_empty -> vf_empty
     | TI_empty -> vi_empty
     | TF_record { label; bound; left; rest } ->
-        let left = eval_lazy ~loc env left in
+        let left = eval_lazy env left in
         let rest = closure env bound rest in
         vf_record label left rest
     | TI_record { label; bound; left; rest } ->
-        let left = eval ~loc env left in
-        let env = eval_pat ~loc env left bound in
-        let rest = eval ~loc env rest in
+        let left = eval env left in
+        let env = eval_pat env left bound in
+        let rest = eval env rest in
         vi_record label left rest
     | TE_field { record; label } ->
-        let record = eval_force ~loc env record in
+        let record = eval_force env record in
         _
     | TF_never -> vf_never
     | TF_enum { label; left; rest } ->
-        let left = eval_lazy ~loc env left in
-        let rest = eval_lazy ~loc env rest in
+        let left = eval_lazy env left in
+        let rest = eval_lazy env rest in
         vf_enum label left rest
     | TI_enum { label; content } ->
-        let content = eval ~loc env content in
+        let content = eval env content in
         vi_enum label content
     | TE_match { pred; cases } ->
-        let pred = eval ~loc env pred in
-        eval_match ~loc env pred cases
+        let pred = eval env pred in
+        eval_match env pred cases
 
-  and eval_pat ~loc env arg pat =
+  and eval_pat env arg pat =
+    match test_pat env arg pat with Some env -> env | None -> _
+
+  and test_pat env arg pat =
     let ( let* ) = Option.bind in
-    (* TODO: this is pure? *)
-    match pat with
-    | P_loc { pat; loc } -> eval_pat ~loc env arg pat
-    | P_annot { pat; annot = _ } -> eval_pat ~loc env arg pat
+    let (Pat { desc; loc }) = pat in
+    match desc with
+    | P_annot { pat; annot = _ } -> test_pat env arg pat
     | P_var { var } -> _
     | P_alias { pat; as_ } -> _
     | P_or { left; right } -> (
-        match test_pat ~loc env arg left with
-        | Some env -> env
-        | None -> eval_pat ~loc env arg right)
+        match test_pat env arg left with
+        | Some env -> Some env
+        | None -> test_pat env arg right)
     | P_box { content } ->
         let content_arg =
           match v_desc arg with
           | VI_box { content } -> content
           | _ -> ve_unbox arg
         in
-        eval_pat ~loc env content_arg content
+        test_pat env content_arg content
     (* TODO: weird to ignore the arg *)
-    | P_unit -> env
+    | P_unit -> Some env
     | P_pair { left; rest } ->
         let left_arg, rest_arg =
           match v_desc arg with
           | VI_pair { left; rest } -> (left, rest)
           | _ -> (ve_fst arg, ve_snd arg)
         in
-        let env = eval_pat ~loc env left_arg left in
-        eval_pat ~loc env rest_arg rest
+        let* env = test_pat env left_arg left in
+        test_pat env rest_arg rest
     (* TODO: also ignore the arg? *)
-    | P_empty -> env
+    | P_empty -> Some env
     | P_record { label; left; rest } -> _
-    | P_never -> env
-    | P_enum { label; content } -> (
-        match v_desc arg with VI_enum _ -> _ | _ -> _)
+    | P_never -> Some env
+    | P_enum { label = expected_label; content = pat } -> (
+        match v_desc arg with VI_enum { label; content } -> _ | _ -> _)
 
-  and test_pat ~loc env arg pat = _
-  and eval_lazy ~loc env term = _
-  and eval_force ~loc env term = _
+  and eval_lazy env term = _
+  and eval_force env term = _
 
   (* TODO: better name for this function *)
-  and eval_closure ~loc arg body =
+  and eval_closure arg body =
     (* TODO: should this location be coming from here? *)
     let (Closure (env, bound, body)) = body in
-    let env = eval_pat ~loc env arg bound in
-    eval ~loc env body
+    let env = eval_pat env arg bound in
+    eval env body
 
   and eval_match ~loc env pred cases = match cases with [] -> _ | _ :: _ -> _
 
@@ -508,13 +529,15 @@ module Machinery = struct
     | VF_never -> failwith "unify_check: VF_never should never happen"
     | VF_enum { label = _; left; rest } ->
         unify_check ~at ~hole left;
-        unify_check_closure ~at ~hole rest
+        unify_check ~at ~hole rest
     | VI_enum { label = _; content } -> unify_check ~at ~hole content
     | VE_match { pred; cases } ->
         unify_check ~at ~hole pred;
         unify_check_cases ~at ~hole cases
 
-  and unify_check_env ~at ~hole env = _
+  and unify_check_env ~at ~hole env =
+    (* TODO: short circuit by having intermediary levels on the env *)
+    e_iter env (fun _var value -> unify_check ~at ~hole value)
 
   and unify_check_closure ~at ~hole closure =
     (* TODO: eval vs going through the env? *)
@@ -645,6 +668,7 @@ module Machinery = struct
         unify received_cases expected_cases
     | _, _ -> _
 
+  and unify_record received expected = v_stru
   and unify_closure received expected = _
 
   let split_vf_box : value -> value = _
@@ -669,56 +693,55 @@ module Typer = struct
   let inst : context -> Var.t -> expected:value -> unit = _
   let split_v_sort : value -> value = _
 
-  let rec infer_term ~loc ctx term =
+  let rec infer_term ctx term =
     let expected = v_hole ctx in
-    check_term ~loc ctx term expected;
+    check_term ctx term expected;
     expected
 
-  and check_term ~loc ctx term expected =
-    match term with
-    | T_loc { term; loc } -> check_term ~loc ctx term expected
+  and check_term ctx term expected =
+    let (Term { desc; loc }) = term in
+    match desc with
     | T_type -> unify vf_type expected
     | T_data -> unify vf_type expected
     | T_annot { term; annot } ->
-        let annot = check_annot ~loc ctx annot in
+        let annot = check_annot ctx annot in
         subtype ~received:annot ~expected;
-        check_term ~loc ctx term annot
+        check_term ctx term annot
     | T_let { bound; arg; body } ->
         let arg_type = infer_pat ~loc ctx bound in
-        check_term ~loc ctx arg arg_type;
+        check_term ctx arg arg_type;
         let arg = v_thunk ctx arg in
         let env = with_subst ctx bound arg in
-        check_term ~loc env body expected
+        check_term env body expected
     | T_var { var } -> inst ctx var ~expected
     | T_hole _ -> _
     | TF_box { type_ } ->
         let sort = split_v_sort expected in
-        check_term ~loc ctx type_ sort
+        check_term ctx type_ sort
     | TI_box { content } ->
         let content_type = split_vf_box expected in
-        check_term ~loc ctx content content_type
+        check_term ctx content content_type
     | TE_unbox { box } ->
         (* TODO:  *)
         let box_type = vf_box expected in
-        check_term ~loc ctx box box_type
+        check_term ctx box box_type
     | TF_nominal { type_ } -> _
     | TI_nominal { content } -> _
     | TF_forall { bound; param; body } ->
-        (* TODO: it's a sort *)
         let sort = split_v_sort expected in
         let param = check_annot ~loc ctx param in
         check_pat ~loc ctx bound param;
         let env = with_skolem ctx bound param in
-        check_term ~loc env body sort
+        check_term env body sort
     | TI_lambda { bound; body } ->
         let param_type, body_type = split_vf_forall expected in
         let ctx = with_skolem ctx bound param_type in
         let body_type = _ in
-        check_term ~loc ctx body body_type
+        check_term ctx body body_type
     | TE_apply { funct; arg } ->
-        let forall = infer_term ~loc ctx funct in
+        let forall = infer_term ctx funct in
         let param_type, body_type = split_vf_forall forall in
-        check_term ~loc ctx arg param_type;
+        check_term ctx arg param_type;
         let arg = v_thunk ctx arg in
         let body_type = eval_closure arg body_type in
         subtype ~received:body_type ~expected
@@ -726,24 +749,27 @@ module Typer = struct
     | TI_unit -> unify vf_unit expected
     | TF_exists { bound; left; rest } ->
         let sort = split_v_sort expected in
+        let left_type = check_annot ~loc ctx left ~sort in
+        check_pat ~loc ctx bound left_type;
+        let sort = split_v_sort expected in
         let left_type = infer_pat ~loc ctx bound in
-        check_term ~loc ctx left left_type;
+        check_term ctx left left_type;
         let left = v_thunk ctx left in
         let env = with_subst ctx bound left in
-        check_term ~loc env rest _
+        check_term env rest _
     | TI_pair { left; rest } ->
         let left_type, rest_type = split_vf_exists expected in
-        check_term ~loc ctx left left_type;
+        check_term ctx left left_type;
         (* TODO: enforce rest_type kind *)
         let left = v_thunk ctx left in
         let rest_type = eval_closure left rest_type in
-        check_term ~loc ctx rest rest_type
+        check_term ctx rest rest_type
     | TE_fst { pair } ->
-        let pair_type = infer_term ~loc ctx pair in
+        let pair_type = infer_term ctx pair in
         let fst_type, _snd_type = split_vf_exists pair_type in
         unify fst_type expected
     | TE_snd { pair } ->
-        let pair_type = infer_term ~loc ctx pair in
+        let pair_type = infer_term ctx pair in
         let _fst_type, snd_type = split_vf_exists pair_type in
         (* TODO: no intermediary thunk? *)
         let fst = eval_fst @@ v_thunk ctx pair in
@@ -755,7 +781,7 @@ module Typer = struct
     | TI_record { label; left; rest } ->
         (* TODO: enforce rest kind *)
         _
-    | TE_field _ -> _
+    | TE_field { record; label } -> _
     | TF_never -> unify vf_data expected
     | TF_enum { label; left; rest } ->
         let sort = split_v_sort expected in
@@ -763,7 +789,7 @@ module Typer = struct
     | TI_enum { label; content } -> _
     | TE_match _ -> _
 
-  and check_annot ~loc env annot = _
+  and check_annot ~loc env annot ~sort = _
 
   and infer_pat ~loc env pat =
     match pat with

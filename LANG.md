@@ -2313,6 +2313,111 @@ expected : Number & '_a
 
 add(-1, 2)
 
+f : () -> { x : Nat; y : Nat };
 
-A & B
+
+H = (A) => _;
+
+H[A]
+
+[Type, H = (A) => _; (A) => H(A)] == [Type, (A) => A]
+
+[Type, (A) => H[A]] == [Type, (A) => A]
+
+T <: A  T <: B
+--------------
+T <: A & B
+
+A <: T  B <: T
+--------------
+A | B <: T
+
+T = Nominal(E);
+
+
+received : R | _A
+expected : E & T
+
+R <: E  _A <: E & _B
+-------------------------
+R | _A <: Nominal(E)
+
+
+{x = M; { x = N; K }}
+
+({x = M; N} ⇐ T) |->
+  T == { x : A; R };
+  {x = (M ⇐ A); (N ⇐ R)}
+
+x : R
+{ x : A; { y : B; R } }
+
+
+f = {R}(r : {x : A; R}) => _;
+
+{ x : A; {} } : Record + {x}
+
+(B : Record - {x})
+
+Nominal(Nat) <: Nat & _A
+Nat | _A <: Nominal(Nat)
+//
+_A := Nominal(Nat)
+
+Nominal(Nat) <: Nominal(Nat)
+Nat <: Nominal(Nat)
+
+R <: E  _A <: E & _B
+-------------------------
+R | _A <: E & T
+
+R <: E
+T <: E
+
+R | T <: E & T
+
+
+neg : <A>(x : Nat & A) -> Int | A;
+
+neg(1.2) : Rat
+
+f : <A>(x : Rat & A) -> Int | A;
+
+x : A & B;
+[(x : A), (x : B)]
+
+add : <A extends Nat>(n : A, m : A) -> A;
+
+add : <A>(n : Nat & A, m : Nat & A) -> A;
+
+id : {A}(x : A) -> A;
+
+
+
+add<String>(?, ?) : (n : Nat & String, m : Nat & String) -> A
+
+add<Nat>(1, 2) : Nat
+
+add<Int>(1, -2) : Int
+add<Rat>(1.2, 2.3) : Rat
+
+add_b(1, 2) : Int
+
+id : (A : Type, x : A) -> A
+
+add : {A}(n : Nat & A, m : Nat & A) -> Nat | A;
+add : {A}(n : Nat & A, m : A) -> A;
+
+incr = (x) => 1 + x;
+
+id : {A}(x : A) -> A
+  = _;
+
+id : (x : _A) -> _A
+
+expected : _A
+received : String
+
+A := String
+
 ```
